@@ -4,7 +4,6 @@
 #
 # Copyright (c) 2013 Nyr. Released under the MIT License.
 
-
 # Detect Debian users running the script with "sh" instead of bash
 if readlink /proc/$$/exe | grep -q "dash"; then
 	echo 'This installer needs to be run with "bash", not "sh".'
@@ -93,7 +92,7 @@ new_client () {
 	cat /etc/openvpn/server/easy-rsa/pki/private/"$client".key
 	echo "</key>"
 	echo "<tls-crypt>"
-	sed -ne '/BEGIN OpenVPN Static key/,$ p' /etc/openvpn/server/tc.key
+	sed -ne '/BEGIN OpenVPN Static key/,$ p' /etc/openvpn/server/ta.key
 	echo "</tls-crypt>"
 	} > ~/"$client".ovpn
 }
@@ -173,6 +172,16 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 		protocol=tcp
 		;;
 	esac
+	echo
+	echo "What VPN network?"
+	def_vpn_network=10.8.0.0
+	read -p "VPN network [$def_vpn_network]: " vpn_network
+	[[ -z "$vpn_network" ]] && vpn_network="$def_vpn_network"
+	until [[ $vpn_network =~ ^[1-9][0-9]{,2}(\.[0-9][0-9]{,2}){2}\.[0]$ ]]; do
+		echo "Invalid input."
+		echo "Error VPN network: $vpn_network"
+		read -p "VPN network: " vpn_network
+	done
 	echo
 	echo "What port should OpenVPN listen to?"
 	read -p "Port [1194]: " port
@@ -254,16 +263,16 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
 	# Without +x in the directory, OpenVPN can't run a stat() on the CRL file
 	chmod o+x /etc/openvpn/server/
 	# Generate key for tls-crypt
-	openvpn --genkey --secret /etc/openvpn/server/tc.key
+	openvpn --genkey --secret /etc/openvpn/server/ta.key
 	# Create the DH parameters file using the predefined ffdhe2048 group
-	echo '-----BEGIN DH PARAMETERS-----
-MIIBCAKCAQEA//////////+t+FRYortKmq/cViAnPTzx2LnFg84tNpWp4TZBFGQz
-+8yTnc4kmz75fS/jY2MMddj2gbICrsRhetPfHtXV/WVhJDP1H18GbtCFY2VVPe0a
-87VXE15/V8k1mE8McODmi3fipona8+/och3xWKE2rec1MKzKT0g6eXq8CrGCsyT7
-YdEIqUuyyOP7uWrat2DX9GgdT0Kj3jlN9K5W7edjcrsZCwenyO4KbXCeAvzhzffi
-7MA0BM0oNC9hkXL+nOmFg/+OTxIy7vKBg8P+OxtMb61zO7X8vC7CIAXFjvGDfRaD
-ssbzSibBsu/6iGtCOGEoXJf//////////wIBAg==
------END DH PARAMETERS-----' > /etc/openvpn/server/dh.pem
+#	echo '-----BEGIN DH PARAMETERS-----
+# MIIBCAKCAQEA//////////+t+FRYortKmq/cViAnPTzx2LnFg84tNpWp4TZBFGQz
+# +8yTnc4kmz75fS/jY2MMddj2gbICrsRhetPfHtXV/WVhJDP1H18GbtCFY2VVPe0a
+# 87VXE15/V8k1mE8McODmi3fipona8+/och3xWKE2rec1MKzKT0g6eXq8CrGCsyT7
+# YdEIqUuyyOP7uWrat2DX9GgdT0Kj3jlN9K5W7edjcrsZCwenyO4KbXCeAvzhzffi
+# 7MA0BM0oNC9hkXL+nOmFg/+OTxIy7vKBg8P+OxtMb61zO7X8vC7CIAXFjvGDfRaD
+# ssbzSibBsu/6iGtCOGEoXJf//////////wIBAg==
+# -----END DH PARAMETERS-----' > /etc/openvpn/server/dh.pem
 	# Generate server.conf
 	echo "local $ip
 port $port
@@ -272,11 +281,13 @@ dev tun
 ca ca.crt
 cert server.crt
 key server.key
-dh dh.pem
+dh none
 auth SHA512
-tls-crypt tc.key
+tls-crypt ta.key
 topology subnet
-server 10.8.0.0 255.255.255.0" > /etc/openvpn/server/server.conf
+server $vpn_network 255.255.255.0"
+;client-to-client
+;duplicate-cn > /etc/openvpn/server/server.conf
 	# IPv6
 	if [[ -z "$ip6" ]]; then
 		echo 'push "redirect-gateway def1 bypass-dhcp"' >> /etc/openvpn/server/server.conf
@@ -323,7 +334,7 @@ server 10.8.0.0 255.255.255.0" > /etc/openvpn/server/server.conf
 	esac
 	echo 'push "block-outside-dns"' >> /etc/openvpn/server/server.conf
 	echo "keepalive 10 120
-cipher AES-256-CBC
+cipher AES-256-GCM
 user nobody
 group $group_name
 persist-key
@@ -331,7 +342,9 @@ persist-tun
 verb 3
 crl-verify crl.pem" >> /etc/openvpn/server/server.conf
 	if [[ "$protocol" = "udp" ]]; then
-		echo "explicit-exit-notify" >> /etc/openvpn/server/server.conf
+		echo "explicit-exit-notify 1" >> /etc/openvpn/server/server.conf
+	else
+		echo "explicit-exit-notify 0" >> /etc/openvpn/server/server.conf
 	fi
 	# Enable net.ipv4.ip_forward for the system
 	echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-openvpn-forward.conf
@@ -349,12 +362,12 @@ crl-verify crl.pem" >> /etc/openvpn/server/server.conf
 		# We don't use --add-service=openvpn because that would only work with
 		# the default port and protocol.
 		firewall-cmd --add-port="$port"/"$protocol"
-		firewall-cmd --zone=trusted --add-source=10.8.0.0/24
+		firewall-cmd --zone=trusted --add-source="$vpn_network"/24
 		firewall-cmd --permanent --add-port="$port"/"$protocol"
-		firewall-cmd --permanent --zone=trusted --add-source=10.8.0.0/24
+		firewall-cmd --permanent --zone=trusted --add-source="$vpn_network"/24
 		# Set NAT for the VPN subnet
-		firewall-cmd --direct --add-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
-		firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
+		firewall-cmd --direct --add-rule ipv4 nat POSTROUTING 0 -s "$vpn_network"/24 ! -d "$vpn_network"/24 -j SNAT --to "$ip"
+		firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -s "$vpn_network"/24 ! -d "$vpn_network"/24 -j SNAT --to "$ip"
 		if [[ -n "$ip6" ]]; then
 			firewall-cmd --zone=trusted --add-source=fddd:1194:1194:1194::/64
 			firewall-cmd --permanent --zone=trusted --add-source=fddd:1194:1194:1194::/64
@@ -375,13 +388,13 @@ crl-verify crl.pem" >> /etc/openvpn/server/server.conf
 Before=network.target
 [Service]
 Type=oneshot
-ExecStart=$iptables_path -t nat -A POSTROUTING -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to $ip
+ExecStart=$iptables_path -t nat -A POSTROUTING -s $vpn_network/24 ! -d $vpn_network/24 -j SNAT --to $ip
 ExecStart=$iptables_path -I INPUT -p $protocol --dport $port -j ACCEPT
-ExecStart=$iptables_path -I FORWARD -s 10.8.0.0/24 -j ACCEPT
+ExecStart=$iptables_path -I FORWARD -s $vpn_network/24 -j ACCEPT
 ExecStart=$iptables_path -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
-ExecStop=$iptables_path -t nat -D POSTROUTING -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to $ip
+ExecStop=$iptables_path -t nat -D POSTROUTING -s $vpn_network/24 ! -d $vpn_network/24 -j SNAT --to $ip
 ExecStop=$iptables_path -D INPUT -p $protocol --dport $port -j ACCEPT
-ExecStop=$iptables_path -D FORWARD -s 10.8.0.0/24 -j ACCEPT
+ExecStop=$iptables_path -D FORWARD -s $vpn_network/24 -j ACCEPT
 ExecStop=$iptables_path -D FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT" > /etc/systemd/system/openvpn-iptables.service
 		if [[ -n "$ip6" ]]; then
 			echo "ExecStart=$ip6tables_path -t nat -A POSTROUTING -s fddd:1194:1194:1194::/64 ! -d fddd:1194:1194:1194::/64 -j SNAT --to $ip6
@@ -423,8 +436,9 @@ persist-key
 persist-tun
 remote-cert-tls server
 auth SHA512
-cipher AES-256-CBC
+cipher AES-256-GCM
 ignore-unknown-option block-outside-dns
+key-direction 1
 verb 3" > /etc/openvpn/server/client-common.txt
 	# Enable and start the OpenVPN service
 	systemctl enable --now openvpn-server@server.service
@@ -519,14 +533,14 @@ else
 				port=$(grep '^port ' /etc/openvpn/server/server.conf | cut -d " " -f 2)
 				protocol=$(grep '^proto ' /etc/openvpn/server/server.conf | cut -d " " -f 2)
 				if systemctl is-active --quiet firewalld.service; then
-					ip=$(firewall-cmd --direct --get-rules ipv4 nat POSTROUTING | grep '\-s 10.8.0.0/24 '"'"'!'"'"' -d 10.8.0.0/24' | grep -oE '[^ ]+$')
+					ip=$(firewall-cmd --direct --get-rules ipv4 nat POSTROUTING | grep '\-s $vpn_network/24 '"'"'!'"'"' -d $vpn_network/24' | grep -oE '[^ ]+$')
 					# Using both permanent and not permanent rules to avoid a firewalld reload.
 					firewall-cmd --remove-port="$port"/"$protocol"
-					firewall-cmd --zone=trusted --remove-source=10.8.0.0/24
+					firewall-cmd --zone=trusted --remove-source="$vpn_network"/24
 					firewall-cmd --permanent --remove-port="$port"/"$protocol"
-					firewall-cmd --permanent --zone=trusted --remove-source=10.8.0.0/24
-					firewall-cmd --direct --remove-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
-					firewall-cmd --permanent --direct --remove-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
+					firewall-cmd --permanent --zone=trusted --remove-source="$vpn_network"/24
+					firewall-cmd --direct --remove-rule ipv4 nat POSTROUTING 0 -s "$vpn_network"/24 ! -d "$vpn_network"/24 -j SNAT --to "$ip"
+					firewall-cmd --permanent --direct --remove-rule ipv4 nat POSTROUTING 0 -s "$vpn_network"/24 ! -d "$vpn_network"/24 -j SNAT --to "$ip"
 					if grep -qs "server-ipv6" /etc/openvpn/server/server.conf; then
 						ip6=$(firewall-cmd --direct --get-rules ipv6 nat POSTROUTING | grep '\-s fddd:1194:1194:1194::/64 '"'"'!'"'"' -d fddd:1194:1194:1194::/64' | grep -oE '[^ ]+$')
 						firewall-cmd --zone=trusted --remove-source=fddd:1194:1194:1194::/64
