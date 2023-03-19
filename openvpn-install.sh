@@ -285,9 +285,9 @@ dh none
 auth SHA512
 tls-crypt ta.key
 topology subnet
-server $vpn_network 255.255.255.0"
+server $vpn_network 255.255.255.0
 ;client-to-client
-;duplicate-cn > /etc/openvpn/server/server.conf
+;duplicate-cn" > /etc/openvpn/server/server.conf
 	# IPv6
 	if [[ -z "$ip6" ]]; then
 		echo 'push "redirect-gateway def1 bypass-dhcp"' >> /etc/openvpn/server/server.conf
