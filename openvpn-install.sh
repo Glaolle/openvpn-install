@@ -343,7 +343,12 @@ group $group_name
 persist-key
 persist-tun
 verb 3
-crl-verify crl.pem" >> /etc/openvpn/server/server.conf
+crl-verify crl.pem
+management 127.0.0.1 8989
+client-config-dir ccd
+log openvpn.log
+status openvpn-status.log 20
+status-version 3" >> /etc/openvpn/server/server.conf
 	if [[ "$protocol" = "udp" ]]; then
 		echo "explicit-exit-notify 1" >> /etc/openvpn/server/server.conf
 	else
