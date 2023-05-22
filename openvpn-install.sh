@@ -246,15 +246,16 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
 	fi
 	# Get easy-rsa
 	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.3/EasyRSA-3.1.3.tgz'
+	mkdir -p /etc/openvpn/server/ccd/
 	mkdir -p /etc/openvpn/server/easy-rsa/
 	{ wget -qO- "$easy_rsa_url" 2>/dev/null || curl -sL "$easy_rsa_url" ; } | tar xz -C /etc/openvpn/server/easy-rsa/ --strip-components 1
 	chown -R root:root /etc/openvpn/server/easy-rsa/
 	cd /etc/openvpn/server/easy-rsa/
+	# Create the PKI, set up the CA and the server and client certificates
+	./easyrsa --batch init-pki
 	cp vars.example pki/vars
 	sed -i 's/#set_var EASYRSA_ALGO.*/set_var EASYRSA_ALGO ec/' pki/vars
 	sed -i 's/#set_var EASYRSA_CURVE.*/set_var EASYRSA_CURVE secp384r1/' pki/vars
-	# Create the PKI, set up the CA and the server and client certificates
-	./easyrsa --batch init-pki
 	./easyrsa --batch build-ca nopass
 	./easyrsa --batch --days=3650 build-server-full server nopass
 	./easyrsa --batch --days=3650 build-client-full "$client" nopass
